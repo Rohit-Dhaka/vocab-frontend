@@ -28,7 +28,8 @@ const THEME = {
     badge: "bg-indigo-50 text-indigo-600",
   },
   german: {
-    hero: "from-rose-500 to-orange-500",
+      hero: "from-neutral-900 via-red-600 to-amber-400",
+
     shadow: "shadow-rose-200",
     bar: "bg-rose-500",
     chip: "bg-rose-500 text-white",
@@ -273,13 +274,13 @@ export default function WordList() {
     <div className="space-y-4 p-4">
       {/* Header */}
       <div
-        className={`relative overflow-hidden rounded-3xl bg-gradient-to-br ${theme.hero} p-5 text-white shadow-lg ${theme.shadow}`}
+        className={`relative overflow-hidden rounded-xl bg-gradient-to-b ${theme.hero} p-5 text-white shadow-lg ${theme.shadow}`}
       >
         <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10" />
         <div className="relative flex items-end justify-between">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide opacity-80">Word library</p>
-            <h1 className="text-2xl font-extrabold capitalize">{language}</h1>
+            <h1 className="text-2xl font-extrabold capitalize">{language}</h1>k
           </div>
           <div className="text-right">
             {pagination ? (
