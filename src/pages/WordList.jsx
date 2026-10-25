@@ -1,61 +1,190 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Pencil, Trash2, Search } from "lucide-react";
+import { Pencil, Trash2, Search, Volume2, Plus, X } from "lucide-react";
 import { getWords, deleteWord } from "../api";
 
-const LEVELS = ["", "A1", "A2", "B1", "B2", "C1"];
+const LEVELS = ["A1", "A2", "B1", "B2", "C1"];
+
+const STATUS_FILTERS = [
+  { value: "", label: "All" },
+  { value: "not_started", label: "New" },
+  { value: "in_progress", label: "Learning" },
+  { value: "done", label: "Done" },
+];
 
 const STATUS_STYLE = {
-  not_started: "bg-slate-100 text-slate-600",
-  in_progress: "bg-amber-100 text-amber-700",
-  done: "bg-emerald-100 text-emerald-700",
+  not_started: { label: "New", dot: "bg-slate-300", text: "text-slate-500" },
+  in_progress: { label: "Learning", dot: "bg-amber-400", text: "text-amber-600" },
+  done: { label: "Done", dot: "bg-emerald-500", text: "text-emerald-600" },
 };
 
-const STATUS_LABEL = {
-  not_started: "Not started",
-  in_progress: "In progress",
-  done: "Done",
+// Color theme for each language
+const THEME = {
+  english: {
+    hero: "from-indigo-600 to-violet-600",
+    shadow: "shadow-indigo-200",
+    bar: "bg-indigo-500",
+    chip: "bg-indigo-600 text-white",
+    badge: "bg-indigo-50 text-indigo-600",
+  },
+  german: {
+    hero: "from-rose-500 to-orange-500",
+    shadow: "shadow-rose-200",
+    bar: "bg-rose-500",
+    chip: "bg-rose-500 text-white",
+    badge: "bg-rose-50 text-rose-600",
+  },
 };
+
+const LANG_CODE = { english: "en-US", german: "de-DE" };
+
+// Reads the word aloud using the browser's built-in voice
+const speak = (text, lang) => {
+  if (!text || !("speechSynthesis" in window)) return;
+
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = lang;
+  utterance.rate = 0.85;
+  window.speechSynthesis.speak(utterance);
+};
+
+const toHttps = (url) => (url || "").replace(/^http:\/\//i, "https://");
+
+function WordTile({ word, theme, onDelete }) {
+  const status = STATUS_STYLE[word.status] || STATUS_STYLE.not_started;
+  const imageUrl = toHttps(word.image?.url);
+
+  return (
+    <li className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      {imageUrl && (
+        <img
+          src={imageUrl}
+          alt={word.word}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          className="h-24 w-full object-cover"
+        />
+      )}
+
+      <div className="flex flex-1 flex-col p-3">
+        {/* Level + status */}
+        <div className="flex items-center justify-between">
+          <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${theme.badge}`}>
+            {word.level}
+          </span>
+          <span className={`flex items-center gap-1 text-[10px] font-semibold ${status.text}`}>
+            <i className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />
+            {status.label}
+          </span>
+        </div>
+
+        {/* Word + speaker */}
+        <div className="mt-2 flex items-start justify-between gap-1">
+          <h3 className="break-words text-lg font-extrabold leading-tight">{word.word}</h3>
+          <button
+            type="button"
+            onClick={() => speak(word.word, LANG_CODE[word.language])}
+            aria-label={`Listen to ${word.word}`}
+            className="shrink-0 rounded-full bg-slate-100 p-1.5 text-slate-600 active:scale-90"
+          >
+            <Volume2 size={14} />
+          </button>
+        </div>
+
+        {word.pronunciationEnglish && (
+          <p className="mt-0.5 truncate text-[11px] text-slate-400">/{word.pronunciationEnglish}/</p>
+        )}
+
+        {/* Meanings */}
+        <p className="mt-2 line-clamp-2 text-sm font-medium text-slate-700">{word.hindiMeaning}</p>
+        <p className="line-clamp-2 text-xs text-slate-400">{word.englishMeaning}</p>
+
+        {/* Progress */}
+        <div className="mt-3">
+          <div className="mb-1 flex justify-between text-[10px] font-medium text-slate-400">
+            <span>Progress</span>
+            <span>{word.progress}%</span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+            <div
+              className={`h-full rounded-full ${word.status === "done" ? "bg-emerald-500" : theme.bar}`}
+              style={{ width: `${word.progress}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3">
+          <Link
+            to={`/edit/${word._id}`}
+            className="flex items-center justify-center gap-1 rounded-lg bg-slate-100 py-1.5 text-xs font-semibold text-slate-600"
+          >
+            <Pencil size={13} /> Edit
+          </Link>
+          <button
+            type="button"
+            onClick={() => onDelete(word._id)}
+            className="flex items-center justify-center gap-1 rounded-lg bg-red-50 py-1.5 text-xs font-semibold text-red-500"
+          >
+            <Trash2 size={13} /> Delete
+          </button>
+        </div>
+      </div>
+    </li>
+  );
+}
 
 export default function WordList() {
-  const { language } = useParams(); // "english" ya "german"
+  const { language } = useParams(); // "english" or "german"
+  const theme = THEME[language] || THEME.english;
 
   const [words, setWords] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [level, setLevel] = useState("");
+  const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const data = await getWords({ language, level, search, page, limit: 20 });
-      // Page 1 par list replace hoti hai, baaki pages par neeche judti hai
-      setWords((prev) => (page === 1 ? data.vocabularies : [...prev, ...data.vocabularies]));
-      setPagination(data.pagination);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [language, level, search, page]);
-
-  // Language badalne par filters reset
+  // Reset everything when the language changes
   useEffect(() => {
     setWords([]);
+    setPagination(null);
     setPage(1);
     setSearch("");
     setLevel("");
+    setStatus("");
   }, [language]);
 
-  // Search typing par thoda ruk kar API call (debounce)
+  // Load words (debounced, and stale responses are ignored)
   useEffect(() => {
-    const timer = setTimeout(load, 300);
-    return () => clearTimeout(timer);
-  }, [load]);
+    let ignore = false;
+
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      setError("");
+
+      try {
+        const data = await getWords({ language, level, status, search, page, limit: 20 });
+        if (ignore) return;
+
+        // Page 1 replaces the list, later pages are appended
+        setWords((prev) => (page === 1 ? data.vocabularies : [...prev, ...data.vocabularies]));
+        setPagination(data.pagination);
+      } catch (err) {
+        if (!ignore) setError(err.message);
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      ignore = true;
+      clearTimeout(timer);
+    };
+  }, [language, level, status, search, page]);
 
   const changeSearch = (value) => {
     setSearch(value);
@@ -63,12 +192,18 @@ export default function WordList() {
   };
 
   const changeLevel = (value) => {
-    setLevel(value);
+    setLevel((prev) => (prev === value ? "" : value)); // tap again to clear
+    setPage(1);
+  };
+
+  const changeStatus = (value) => {
+    setStatus(value);
     setPage(1);
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Delete this word?")) return;
+    if (!window.confirm("Delete this word? This cannot be undone.")) return;
+
     try {
       await deleteWord(id);
       setWords((prev) => prev.filter((w) => w._id !== id));
@@ -79,102 +214,112 @@ export default function WordList() {
   };
 
   const hasMore = pagination && page < pagination.totalPages;
+  const hasFilters = Boolean(search || level || status);
 
   return (
-    <div className="space-y-3 p-4">
-      <div className="flex items-end justify-between">
-        <h1 className="text-xl font-bold capitalize">{language} words</h1>
-        {pagination && (
-          <span className="text-xs text-slate-400">{pagination.total} total</span>
+    <div className="space-y-4 p-4">
+      {/* Header */}
+      <div
+        className={`relative overflow-hidden rounded-3xl bg-gradient-to-br ${theme.hero} p-5 text-white shadow-lg ${theme.shadow}`}
+      >
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10" />
+        <div className="relative flex items-end justify-between">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide opacity-80">Word library</p>
+            <h1 className="text-2xl font-extrabold capitalize">{language}</h1>
+          </div>
+          <div className="text-right">
+            <p className="text-3xl font-extrabold leading-none">{pagination ? pagination.total : "–"}</p>
+            <p className="text-[11px] opacity-80">{hasFilters ? "matching words" : "total words"}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search size={16} className="absolute left-3.5 top-3.5 text-slate-400" />
+        <input
+          value={search}
+          maxLength={100}
+          onChange={(e) => changeSearch(e.target.value)}
+          placeholder="Search by word or meaning"
+          className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-10 text-sm outline-none focus:border-indigo-500"
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={() => changeSearch("")}
+            aria-label="Clear search"
+            className="absolute right-3 top-3 rounded-full bg-slate-100 p-1 text-slate-500"
+          >
+            <X size={14} />
+          </button>
         )}
       </div>
 
-      {/* Search + level filter */}
-      <div className="flex gap-2">
-        <div className="relative flex-1">
-          <Search size={16} className="absolute left-3 top-3 text-slate-400" />
-          <input
-            value={search}
-            maxLength={100}
-            onChange={(e) => changeSearch(e.target.value)}
-            placeholder="Search word or meaning"
-            className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-indigo-500"
-          />
-        </div>
-        <select
-          value={level}
-          onChange={(e) => changeLevel(e.target.value)}
-          className="rounded-xl border border-slate-200 bg-white px-2 text-sm outline-none"
-        >
-          {LEVELS.map((l) => (
-            <option key={l} value={l}>
-              {l || "All"}
-            </option>
-          ))}
-        </select>
+      {/* Filters: status + level chips */}
+      <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
+        {STATUS_FILTERS.map((f) => (
+          <button
+            key={f.value}
+            onClick={() => changeStatus(f.value)}
+            className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold ${
+              status === f.value ? theme.chip : "bg-white text-slate-600 shadow-sm"
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+
+        <span className="mx-1 w-px shrink-0 bg-slate-200" />
+
+        {LEVELS.map((l) => (
+          <button
+            key={l}
+            onClick={() => changeLevel(l)}
+            className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold ${
+              level === l ? "bg-slate-900 text-white" : "bg-white text-slate-600 shadow-sm"
+            }`}
+          >
+            {l}
+          </button>
+        ))}
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
-      {/* Word cards */}
-      <ul className="space-y-2">
+      {/* Word grid */}
+      <ul className="grid grid-cols-2 gap-3">
         {words.map((w) => (
-          <li
-            key={w._id}
-            className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-3"
-          >
-            {w.image?.url && (
-              <img src={w.image.url} alt={w.word} className="h-14 w-14 rounded-lg object-cover" />
-            )}
-
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <p className="truncate font-semibold">{w.word}</p>
-                <span className="rounded bg-indigo-50 px-1.5 text-[10px] font-semibold text-indigo-600">
-                  {w.level}
-                </span>
-              </div>
-              <p className="truncate text-sm text-slate-500">{w.hindiMeaning}</p>
-              <p className="truncate text-xs text-slate-400">{w.englishMeaning}</p>
-
-              <div className="mt-1.5 flex items-center gap-2">
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${STATUS_STYLE[w.status]}`}>
-                  {STATUS_LABEL[w.status]}
-                </span>
-                <span className="text-[10px] text-slate-400">{w.progress}%</span>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Link
-                to={`/edit/${w._id}`}
-                aria-label="Edit"
-                className="rounded-lg bg-slate-100 p-2 text-slate-600"
-              >
-                <Pencil size={16} />
-              </Link>
-              <button
-                onClick={() => handleDelete(w._id)}
-                aria-label="Delete"
-                className="rounded-lg bg-red-50 p-2 text-red-500"
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
-          </li>
+          <WordTile key={w._id} word={w} theme={theme} onDelete={handleDelete} />
         ))}
       </ul>
 
       {loading && <p className="text-center text-sm text-slate-500">Loading...</p>}
 
       {!loading && words.length === 0 && !error && (
-        <p className="py-10 text-center text-sm text-slate-400">No words found.</p>
+        <div className="flex flex-col items-center gap-3 py-12 text-center">
+          <p className="text-base font-semibold">
+            {hasFilters ? "No words match your filters" : "No words yet"}
+          </p>
+          <p className="text-sm text-slate-400">
+            {hasFilters ? "Try changing the search or filters." : "Add your first word to get started."}
+          </p>
+          {!hasFilters && (
+            <Link
+              to="/add"
+              className={`flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-semibold ${theme.chip}`}
+            >
+              <Plus size={16} /> Add word
+            </Link>
+          )}
+        </div>
       )}
 
       {hasMore && !loading && (
         <button
           onClick={() => setPage((p) => p + 1)}
-          className="w-full rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-medium text-indigo-600"
+          className="w-full rounded-2xl border border-slate-200 bg-white py-3 text-sm font-semibold text-slate-700"
         >
           Load more
         </button>
