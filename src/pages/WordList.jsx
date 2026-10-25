@@ -280,7 +280,7 @@ export default function WordList() {
         <div className="relative flex items-end justify-between">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide opacity-80">Word library</p>
-            <h1 className="text-2xl font-extrabold capitalize">{language}</h1>k
+            <h1 className="text-2xl font-extrabold capitalize">{language}</h1>
           </div>
           <div className="text-right">
             {pagination ? (

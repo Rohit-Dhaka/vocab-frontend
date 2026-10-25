@@ -277,7 +277,7 @@ export default function Dashboard() {
       </div>
 
       {/* Hero: ring + totals */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-600 via-indigo-600 to-violet-600 p-5 text-white shadow-lg shadow-indigo-200">
+      <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-indigo-600 via-indigo-600 to-violet-600 p-5 text-white shadow-lg shadow-indigo-200">
         <div className="absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/10" />
         <div className="absolute -bottom-12 -left-8 h-32 w-32 rounded-full bg-white/10" />
 
