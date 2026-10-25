@@ -3,8 +3,6 @@ import { Link } from "react-router-dom";
 import {
   Eye,
   EyeOff,
-  Minus,
-  Plus,
   Check,
   X,
   ChevronLeft,
@@ -13,8 +11,6 @@ import {
   Shuffle,
 } from "lucide-react";
 import { getWords, updateWord } from "../api";
-
-const LEVELS = ["A1", "A2", "B1", "B2", "C1"];
 
 // Only words that are not done are practiced
 const SOURCES = ["in_progress", "not_started"];
@@ -79,6 +75,47 @@ const isCorrect = (answer, word) => {
   });
 };
 
+// ---------- Skeleton loading ----------
+
+// A gray pulsing block used to build the skeleton screen
+const Bone = ({ className = "" }) => (
+  <div className={`animate-pulse rounded-xl bg-slate-200 ${className}`} />
+);
+
+// Same shape as the real word card, shown while words are loading
+function WordCardSkeleton() {
+  return (
+    <div
+      className="mx-auto max-w-md space-y-3 px-4 pb-4"
+      aria-busy="true"
+      aria-label="Loading words"
+    >
+      {/* Word hero card */}
+      <div className="space-y-3 rounded-2xl bg-slate-200/70 px-4 py-5">
+        <div className="flex items-center justify-center gap-3">
+          <Bone className="h-10 w-44 bg-slate-300/70" />
+          <Bone className="h-10 w-10 rounded-full bg-slate-300/70" />
+        </div>
+        <div className="flex gap-2">
+          <Bone className="h-11 flex-1 rounded-2xl bg-slate-300/70" />
+          <Bone className="h-11 flex-1 rounded-2xl bg-slate-300/70" />
+        </div>
+      </div>
+
+      {/* Meaning */}
+      <Bone className="h-24 w-full rounded-2xl" />
+
+      {/* Status and progress */}
+      <Bone className="h-40 w-full rounded-2xl" />
+
+      {/* Answer */}
+      <Bone className="h-28 w-full rounded-2xl" />
+    </div>
+  );
+}
+
+// ---------- Components ----------
+
 function WordImage({ image, alt }) {
   const [failed, setFailed] = useState(false);
   const url = toHttps(image?.url);
@@ -136,11 +173,6 @@ function WordCard({ word, onDone, onUpdate }) {
     setStatus(
       next === 0 ? "not_started" : next === 100 ? "done" : "in_progress",
     );
-  };
-
-  const changeLevel = (step) => {
-    const index = LEVELS.indexOf(level) + step;
-    if (index >= 0 && index < LEVELS.length) setLevel(LEVELS[index]);
   };
 
   // Auto save 0.5 seconds after a change
@@ -296,10 +328,7 @@ function WordCard({ word, onDone, onUpdate }) {
         </div>
       </div>
 
-      {/* Type the meaning */}
-    
-
-      {/* Status, progress, level (auto save) */}
+      {/* Status, progress (auto save) */}
       <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="grid grid-cols-3 gap-2">
           {STATUSES.map((s) => (
@@ -335,8 +364,6 @@ function WordCard({ word, onDone, onUpdate }) {
           />
         </div>
 
-     
-
         <p className="h-4 text-xs text-slate-400">
           {saveState === "saving" && "Saving..."}
           {saveState === "saved" && "Saved ✓"}
@@ -345,7 +372,9 @@ function WordCard({ word, onDone, onUpdate }) {
           )}
         </p>
       </div>
-        <form
+
+      {/* Type the meaning */}
+      <form
         onSubmit={checkAnswer}
         className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
       >
@@ -604,6 +633,7 @@ export default function Practice() {
 
   const word = poolRef.current.get(seqRef.current[cursorRef.current]);
   const poolSize = poolRef.current.size;
+  const showSkeleton = loading && poolSize === 0;
   const empty = !loading && poolSize === 0;
 
   return (
@@ -646,11 +676,16 @@ export default function Practice() {
               <Shuffle size={13} />
               Random order · endless
             </p>
-            <p>
-              <b className="text-slate-700">{poolSize}</b> words ·{" "}
-              <b className="text-slate-700">{bagRef.current.length}</b> left in
-              this round
-            </p>
+
+            {showSkeleton ? (
+              <Bone className="h-4 w-32" />
+            ) : (
+              <p>
+                <b className="text-slate-700">{poolSize}</b> words ·{" "}
+                <b className="text-slate-700">{bagRef.current.length}</b> left
+                in this round
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -663,13 +698,9 @@ export default function Practice() {
         onTouchEnd={onTouchEnd}
         className="flex-1 overflow-y-auto pt-1"
       >
-        {loading && poolSize === 0 && (
-          <p className="p-4 text-center text-sm text-slate-500">
-            Loading words...
-          </p>
-        )}
+        {showSkeleton && !error && <WordCardSkeleton />}
 
-        {empty && (
+        {empty && !error && (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
             <p className="text-lg font-semibold">All done! 🎉</p>
             <p className="text-sm text-slate-500">

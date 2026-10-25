@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Pencil, Trash2, Search, Volume2, Plus, X } from "lucide-react";
+import { Pencil, Trash2, Search, Volume2, Plus, X, RefreshCw } from "lucide-react";
 import { getWords, deleteWord } from "../api";
 
 const LEVELS = ["A1", "A2", "B1", "B2", "C1"];
@@ -50,6 +50,51 @@ const speak = (text, lang) => {
 };
 
 const toHttps = (url) => (url || "").replace(/^http:\/\//i, "https://");
+
+// ---------- Skeleton loading ----------
+
+// A gray pulsing block used to build skeleton screens
+const Bone = ({ className = "" }) => (
+  <div className={`animate-pulse rounded-lg bg-slate-200 ${className}`} />
+);
+
+// Same shape as a real word tile
+function WordTileSkeleton() {
+  return (
+    <li
+      className="flex flex-col rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
+      aria-hidden="true"
+    >
+      {/* Level + status */}
+      <div className="flex items-center justify-between">
+        <Bone className="h-4 w-8" />
+        <Bone className="h-3 w-14" />
+      </div>
+
+      {/* Word + speaker */}
+      <div className="mt-3 flex items-start justify-between gap-2">
+        <Bone className="h-6 w-24" />
+        <Bone className="h-7 w-7 rounded-full" />
+      </div>
+      <Bone className="mt-2 h-3 w-20" />
+
+      {/* Meanings */}
+      <Bone className="mt-3 h-4 w-full" />
+      <Bone className="mt-1.5 h-3 w-2/3" />
+
+      {/* Progress */}
+      <Bone className="mt-4 h-1.5 w-full" />
+
+      {/* Actions */}
+      <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3">
+        <Bone className="h-7" />
+        <Bone className="h-7" />
+      </div>
+    </li>
+  );
+}
+
+// ---------- Word tile ----------
 
 function WordTile({ word, theme, onDelete }) {
   const status = STATUS_STYLE[word.status] || STATUS_STYLE.not_started;
@@ -135,6 +180,8 @@ function WordTile({ word, theme, onDelete }) {
   );
 }
 
+// ---------- Page ----------
+
 export default function WordList() {
   const { language } = useParams(); // "english" or "german"
   const theme = THEME[language] || THEME.english;
@@ -147,6 +194,7 @@ export default function WordList() {
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0); // changing this reloads the list
 
   // Reset everything when the language changes
   useEffect(() => {
@@ -162,10 +210,11 @@ export default function WordList() {
   useEffect(() => {
     let ignore = false;
 
-    const timer = setTimeout(async () => {
-      setLoading(true);
-      setError("");
+    // Show the skeleton right away, then fetch after a short pause (search typing)
+    setLoading(true);
+    setError("");
 
+    const timer = setTimeout(async () => {
       try {
         const data = await getWords({ language, level, status, search, page, limit: 20 });
         if (ignore) return;
@@ -184,7 +233,7 @@ export default function WordList() {
       ignore = true;
       clearTimeout(timer);
     };
-  }, [language, level, status, search, page]);
+  }, [language, level, status, search, page, reloadKey]);
 
   const changeSearch = (value) => {
     setSearch(value);
@@ -216,6 +265,10 @@ export default function WordList() {
   const hasMore = pagination && page < pagination.totalPages;
   const hasFilters = Boolean(search || level || status);
 
+  // First load / new filter: skeleton replaces the grid. Load more: skeleton is added at the end.
+  const showGridSkeleton = loading && page === 1;
+  const showMoreSkeleton = loading && page > 1;
+
   return (
     <div className="space-y-4 p-4">
       {/* Header */}
@@ -229,8 +282,14 @@ export default function WordList() {
             <h1 className="text-2xl font-extrabold capitalize">{language}</h1>
           </div>
           <div className="text-right">
-            <p className="text-3xl font-extrabold leading-none">{pagination ? pagination.total : "–"}</p>
-            <p className="text-[11px] opacity-80">{hasFilters ? "matching words" : "total words"}</p>
+            {pagination ? (
+              <p className="text-3xl font-extrabold leading-none">{pagination.total}</p>
+            ) : (
+              <div className="ml-auto h-8 w-12 animate-pulse rounded-lg bg-white/30" />
+            )}
+            <p className="mt-1 text-[11px] opacity-80">
+              {hasFilters ? "matching words" : "total words"}
+            </p>
           </div>
         </div>
       </div>
@@ -286,16 +345,30 @@ export default function WordList() {
         ))}
       </div>
 
-      {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+      {/* Error with retry */}
+      {error && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl bg-red-50 px-4 py-3">
+          <p className="text-sm text-red-600">{error}</p>
+          <button
+            onClick={() => setReloadKey((k) => k + 1)}
+            className="flex shrink-0 items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-red-600 shadow-sm"
+          >
+            <RefreshCw size={13} /> Retry
+          </button>
+        </div>
+      )}
 
       {/* Word grid */}
-      <ul className="grid grid-cols-2 gap-3">
-        {words.map((w) => (
-          <WordTile key={w._id} word={w} theme={theme} onDelete={handleDelete} />
-        ))}
-      </ul>
+      <ul className="grid grid-cols-2 gap-3" aria-busy={loading}>
+        {showGridSkeleton
+          ? Array.from({ length: 6 }, (_, i) => <WordTileSkeleton key={i} />)
+          : words.map((w) => (
+              <WordTile key={w._id} word={w} theme={theme} onDelete={handleDelete} />
+            ))}
 
-      {loading && <p className="text-center text-sm text-slate-500">Loading...</p>}
+        {showMoreSkeleton &&
+          Array.from({ length: 2 }, (_, i) => <WordTileSkeleton key={`more-${i}`} />)}
+      </ul>
 
       {!loading && words.length === 0 && !error && (
         <div className="flex flex-col items-center gap-3 py-12 text-center">

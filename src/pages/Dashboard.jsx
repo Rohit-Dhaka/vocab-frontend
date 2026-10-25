@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Dumbbell, Plus, Flame, Target, TrendingUp } from "lucide-react";
+import { Dumbbell, Plus, Flame, Target, TrendingUp, RefreshCw } from "lucide-react";
 import { getStats } from "../api";
 
 const LEVELS = ["A1", "A2", "B1", "B2", "C1"];
@@ -22,7 +22,52 @@ const greeting = () => {
   return "Good evening";
 };
 
-// Gol progress ring
+// ---------- Skeleton loading ----------
+
+// A gray pulsing block used to build the skeleton screen
+const Bone = ({ className = "" }) => (
+  <div className={`animate-pulse rounded-xl bg-slate-200 ${className}`} />
+);
+
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-4 p-4" aria-busy="true" aria-label="Loading dashboard">
+      {/* Header */}
+      <div className="space-y-2">
+        <Bone className="h-4 w-44" />
+        <Bone className="h-7 w-52" />
+      </div>
+
+      {/* Hero card */}
+      <Bone className="h-44 w-full rounded-3xl" />
+
+      {/* Quick actions */}
+      <div className="grid grid-cols-2 gap-3">
+        <Bone className="h-16 rounded-2xl" />
+        <Bone className="h-16 rounded-2xl" />
+      </div>
+
+      {/* Mini stats */}
+      <div className="grid grid-cols-3 gap-3">
+        <Bone className="h-24 rounded-2xl" />
+        <Bone className="h-24 rounded-2xl" />
+        <Bone className="h-24 rounded-2xl" />
+      </div>
+
+      {/* Language cards */}
+      <Bone className="h-5 w-28" />
+      <Bone className="h-32 w-full rounded-3xl" />
+      <Bone className="h-32 w-full rounded-3xl" />
+
+      {/* Level breakdown */}
+      <Bone className="h-64 w-full rounded-3xl" />
+    </div>
+  );
+}
+
+// ---------- UI pieces ----------
+
+// Circular progress ring
 function Ring({ percent, size = 96, stroke = 9, track = "#e2e8f0", color = "#6366f1", children }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
@@ -50,7 +95,7 @@ function Ring({ percent, size = 96, stroke = 9, track = "#e2e8f0", color = "#636
   );
 }
 
-// Done / In progress / Not started ki ek hi bar mein split
+// Done / learning split in a single bar
 function SplitBar({ data }) {
   const total = data.totalWords || 1;
   const pct = (n) => `${(n / total) * 100}%`;
@@ -77,7 +122,7 @@ const Legend = ({ data }) => (
   </div>
 );
 
-// Ek language ka card
+// One card per language
 function LanguageCard({ title, data, to, accent }) {
   return (
     <Link
@@ -97,8 +142,8 @@ function LanguageCard({ title, data, to, accent }) {
             </span>
           </div>
           <p className="mt-0.5 text-xs text-slate-500">
-            Avg progress <b className="text-slate-700">{data.averageProgress}%</b> ·{" "}
-            <b className="text-slate-700">{data.remainingWords}</b> baaki
+            Average progress <b className="text-slate-700">{data.averageProgress}%</b> ·{" "}
+            <b className="text-slate-700">{data.remainingWords}</b> remaining
           </p>
           <div className="mt-2">
             <SplitBar data={data} />
@@ -110,7 +155,7 @@ function LanguageCard({ title, data, to, accent }) {
   );
 }
 
-// A1 se C1 tak level-wise detail
+// Level-wise details from A1 to C1
 function LevelBreakdown({ levels }) {
   const [lang, setLang] = useState("english");
 
@@ -127,7 +172,7 @@ function LevelBreakdown({ levels }) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-bold">Level wise</h3>
+        <h3 className="text-base font-bold">Progress by level</h3>
         <div className="flex rounded-full bg-slate-100 p-0.5">
           {["english", "german"].map((l) => (
             <button
@@ -183,18 +228,41 @@ const MiniStat = ({ icon: Icon, label, value, tone }) => (
   </div>
 );
 
+// ---------- Page ----------
+
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const loadStats = useCallback(() => {
+    setError("");
+    setStats(null);
+
     getStats()
       .then(setStats)
       .catch((err) => setError(err.message));
   }, []);
 
-  if (error) return <p className="p-4 text-sm text-red-600">{error}</p>;
-  if (!stats) return <p className="p-4 text-sm text-slate-500">Loading...</p>;
+  useEffect(() => {
+    loadStats();
+  }, [loadStats]);
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center gap-3 p-8 text-center">
+        <p className="text-base font-semibold">Something went wrong</p>
+        <p className="text-sm text-red-600">{error}</p>
+        <button
+          onClick={loadStats}
+          className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white"
+        >
+          <RefreshCw size={16} /> Try again
+        </button>
+      </div>
+    );
+  }
+
+  if (!stats) return <DashboardSkeleton />;
 
   const find = (lang) => stats.languages.find((l) => l.language === lang) || EMPTY;
   const overall = stats.overall;
@@ -204,7 +272,7 @@ export default function Dashboard() {
     <div className="space-y-4 p-4">
       {/* Header */}
       <div>
-        <p className="text-sm text-slate-500">{greeting()} Rohit Dhaka</p>
+        <p className="text-sm text-slate-500">{greeting()}, Rohit Dhaka</p>
         <h1 className="text-2xl font-extrabold">Your vocabulary</h1>
       </div>
 
@@ -229,7 +297,7 @@ export default function Dashboard() {
             <p className="text-xs opacity-80">Total words</p>
             <p className="text-4xl font-extrabold leading-tight">{overall.totalWords}</p>
             <p className="mt-1 text-xs opacity-90">
-              <b>{overall.completedWords}</b> done · <b>{overall.remainingWords}</b> baaki
+              <b>{overall.completedWords}</b> done · <b>{overall.remainingWords}</b> remaining
             </p>
           </div>
         </div>
@@ -257,7 +325,7 @@ export default function Dashboard() {
           </span>
           <span>
             <span className="block text-sm font-bold">Practice</span>
-            <span className="block text-[11px] opacity-70">{toPractice} words baaki</span>
+            <span className="block text-[11px] opacity-70">{toPractice} words to go</span>
           </span>
         </Link>
 
@@ -270,7 +338,7 @@ export default function Dashboard() {
           </span>
           <span>
             <span className="block text-sm font-bold">New word</span>
-            <span className="block text-[11px] text-slate-500">Add karo</span>
+            <span className="block text-[11px] text-slate-500">Add to your list</span>
           </span>
         </Link>
       </div>
@@ -291,7 +359,7 @@ export default function Dashboard() {
         />
         <MiniStat
           icon={TrendingUp}
-          label="Avg progress"
+          label="Avg. progress"
           value={`${overall.averageProgress}%`}
           tone="bg-emerald-50 text-emerald-600"
         />
@@ -313,7 +381,7 @@ export default function Dashboard() {
       />
 
       {/* Levels */}
-      <LevelBreakdown levels={stats.levels} />
+      <LevelBreakdown levels={stats.levels || []} />
     </div>
   );
 }
