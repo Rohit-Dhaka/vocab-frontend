@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Eye,
@@ -12,13 +12,10 @@ import {
 } from "lucide-react";
 import { getWords, updateWord } from "../api";
 
-// Only words that are not done are practiced
+// Only unfinished words are practiced.
 const SOURCES = ["in_progress", "not_started"];
 
-// Safety limit for how many words are loaded into one practice session
 const MAX_WORDS = 1000;
-
-// How many visited words are remembered for the Previous button
 const MAX_HISTORY = 100;
 
 const STATUSES = [
@@ -33,56 +30,102 @@ const LANGUAGES = [
   { value: "german", label: "German" },
 ];
 
-// Remembers the selected language
 const LANG_KEY = "practice-language";
+const HIDE_MEANING_KEY = "practice-hide-meaning";
 
-// Reads the word aloud using the browser's built-in voice
-const LANG_CODE = { english: "en-US", german: "de-DE" };
+const LANG_CODE = {
+  english: "en-US",
+  german: "de-DE",
+};
+
+const normalize = (text) =>
+  String(text ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+const toHttps = (url) => (url || "").replace(/^http:\/\//i, "https://");
+
+const getProgress = (word) => {
+  const progress = Number(word.progress);
+  return Number.isFinite(progress) ? Math.min(100, Math.max(0, progress)) : 0;
+};
+
+const getStatus = (word) => word.status || "not_started";
 
 const speak = (text, lang) => {
   if (!text || !("speechSynthesis" in window)) return;
 
   window.speechSynthesis.cancel();
+
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = lang;
-  utterance.rate = 0.85; // a little slower, easier to learn from
+  utterance.rate = 0.85;
+
   window.speechSynthesis.speak(utterance);
 };
 
-// Fisher-Yates shuffle
 const shuffle = (list) => {
   const array = [...list];
+
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [array[i], array[j]] = [array[j], array[i]];
   }
+
   return array;
 };
 
-const toHttps = (url) => (url || "").replace(/^http:\/\//i, "https://");
+// Higher-progress words receive more practice tickets.
+//
+// Progress 0-19:   1 ticket
+// Progress 20-39:  2 tickets
+// Progress 40-59:  3 tickets
+// Progress 60-79:  4 tickets
+// Progress 80-99:  5 tickets
+// Progress 100:    6 tickets
+//
+// Completed words are removed from the practice pool separately.
+const getPracticeWeight = (word) => 1 + Math.floor(getProgress(word) / 20);
 
-// Answer check: any one part of the meaning (split by comma / ; / slash) counts as correct
-const normalize = (text) => text.trim().toLowerCase().replace(/\s+/g, " ");
+// Each practice round contains weighted tickets.
+// A word with higher progress can appear more often.
+const createWeightedBag = (pool) => {
+  const tickets = [];
 
+  for (const [id, word] of pool.entries()) {
+    const weight = getPracticeWeight(word);
+
+    for (let i = 0; i < weight; i++) {
+      tickets.push(id);
+    }
+  }
+
+  return shuffle(tickets);
+};
+
+// Any complete meaning or individual comma/semicolon/slash-separated
+// meaning is accepted.
 const isCorrect = (answer, word) => {
   const typed = normalize(answer);
+
   if (!typed) return false;
 
   return [word.hindiMeaning, word.englishMeaning].some((meaning) => {
     const full = normalize(meaning);
+
     const parts = full.split(/[,;/]/).map(normalize).filter(Boolean);
+
     return typed === full || parts.includes(typed);
   });
 };
 
 // ---------- Skeleton loading ----------
 
-// A gray pulsing block used to build the skeleton screen
 const Bone = ({ className = "" }) => (
   <div className={`animate-pulse rounded-xl bg-slate-200 ${className}`} />
 );
 
-// Same shape as the real word card, shown while words are loading
 function WordCardSkeleton() {
   return (
     <div
@@ -90,35 +133,34 @@ function WordCardSkeleton() {
       aria-busy="true"
       aria-label="Loading words"
     >
-      {/* Word hero card */}
-      <div className="space-y-3 rounded-2xl bg-slate-200/70 px-4 py-5">
+      <div className="space-y-3 rounded-2xl border border-slate-200 bg-white px-4 py-5">
         <div className="flex items-center justify-center gap-3">
-          <Bone className="h-10 w-44 bg-slate-300/70" />
-          <Bone className="h-10 w-10 rounded-full bg-slate-300/70" />
+          <Bone className="h-10 w-44" />
+          <Bone className="h-10 w-10 rounded-full" />
         </div>
+
         <div className="flex gap-2">
-          <Bone className="h-11 flex-1 rounded-2xl bg-slate-300/70" />
-          <Bone className="h-11 flex-1 rounded-2xl bg-slate-300/70" />
+          <Bone className="h-11 flex-1 rounded-2xl" />
+          <Bone className="h-11 flex-1 rounded-2xl" />
         </div>
       </div>
 
-      {/* Meaning */}
       <Bone className="h-24 w-full rounded-2xl" />
-
-      {/* Status and progress */}
       <Bone className="h-40 w-full rounded-2xl" />
-
-      {/* Answer */}
       <Bone className="h-28 w-full rounded-2xl" />
     </div>
   );
 }
 
-// ---------- Components ----------
+// ---------- Word image ----------
 
 function WordImage({ image, alt }) {
   const [failed, setFailed] = useState(false);
   const url = toHttps(image?.url);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [url]);
 
   if (!url) return null;
 
@@ -133,99 +175,164 @@ function WordImage({ image, alt }) {
   return (
     <img
       src={url}
-      alt={alt}
+      alt={alt || "Vocabulary"}
       loading="lazy"
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
-      className="mx-auto mt-4  rounded-2xl border-2 border-white/40 bg-white/10 object-cover"
+      className="mx-auto mt-4 max-h-48 max-w-full rounded-2xl border border-white/40 bg-white/10 object-cover"
     />
   );
 }
 
-function WordCard({ word, onDone, onUpdate }) {
-  const [status, setStatus] = useState(word.status);
-  const [progress, setProgress] = useState(word.progress);
-  const [level, setLevel] = useState(word.level);
-  const [saveState, setSaveState] = useState(""); // "", "saving", "saved", or an error message
+// ---------- Toggle ----------
 
-  const [revealed, setRevealed] = useState(false);
+function Toggle({ checked, onChange, label }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors ${
+        checked
+          ? "border-indigo-600 bg-indigo-600"
+          : "border-slate-300 bg-slate-200"
+      }`}
+    >
+      <span
+        className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+          checked ? "translate-x-5" : "translate-x-1"
+        }`}
+      />
+    </button>
+  );
+}
+
+// ---------- Word card ----------
+
+function WordCard({ word, hideMeaningMode, onDone, onUpdate }) {
+  const [status, setStatus] = useState(getStatus(word));
+  const [progress, setProgress] = useState(getProgress(word));
+  const [level, setLevel] = useState(word.level || "A1");
+
+  const [saveState, setSaveState] = useState("");
+
+  // Hide the meaning initially when hide mode is enabled.
+  const [revealed, setRevealed] = useState(!hideMeaningMode);
+
   const [answer, setAnswer] = useState("");
-  const [result, setResult] = useState(null); // null | "correct" | "wrong"
+  const [result, setResult] = useState(null);
 
   const saved = useRef({
-    status: word.status,
-    progress: word.progress,
-    level: word.level,
+    status: getStatus(word),
+    progress: getProgress(word),
+    level: word.level || "A1",
   });
-  const latest = useRef({ status, progress, level });
+
+  const latest = useRef({
+    status,
+    progress,
+    level,
+  });
+
   latest.current = { status, progress, level };
 
   const changeStatus = (next) => {
     setStatus(next);
-    if (next === "not_started") setProgress(0);
-    else if (next === "done") setProgress(100);
-    else if (progress < 1 || progress > 99) setProgress(50);
+
+    if (next === "not_started") {
+      setProgress(0);
+    } else if (next === "done") {
+      setProgress(100);
+    } else if (progress < 1 || progress > 99) {
+      setProgress(50);
+    }
   };
 
   const changeProgress = (value) => {
     const next = Number(value);
+
     setProgress(next);
+
     setStatus(
       next === 0 ? "not_started" : next === 100 ? "done" : "in_progress",
     );
   };
 
-  // Auto save 0.5 seconds after a change
+  // Auto-save changes after 500 ms.
   useEffect(() => {
-    const s = saved.current;
-    if (s.status === status && s.progress === progress && s.level === level)
+    const previous = saved.current;
+
+    if (
+      previous.status === status &&
+      previous.progress === progress &&
+      previous.level === level
+    ) {
       return;
+    }
 
     setSaveState("saving");
 
+    const snapshot = { status, progress, level };
+
     const timer = setTimeout(async () => {
       try {
-        await updateWord(word._id, { status, progress, level });
-        saved.current = { status, progress, level };
-        setSaveState("saved");
-        onUpdate(word._id, { status, progress, level });
+        await updateWord(word._id, snapshot);
 
-        // A word marked as done leaves the practice rotation
-        if (status === "done") setTimeout(() => onDone(word._id), 800);
+        saved.current = snapshot;
+
+        setSaveState("saved");
+
+        onUpdate(word._id, snapshot);
+
+        if (snapshot.status === "done") {
+          onDone(word._id);
+        }
       } catch (err) {
-        setSaveState(err.message);
+        setSaveState(err.message || "Unable to save changes");
       }
     }, 500);
 
     return () => clearTimeout(timer);
   }, [status, progress, level, word._id, onDone, onUpdate]);
 
-  // If the user moves to another word before auto save fires, save immediately
-  useEffect(
-    () => () => {
-      const s = saved.current;
-      const l = latest.current;
-      if (
-        s.status === l.status &&
-        s.progress === l.progress &&
-        s.level === l.level
-      )
-        return;
+  // Flush pending changes when leaving the word.
+  useEffect(() => {
+    return () => {
+      const previous = saved.current;
+      const current = latest.current;
 
-      saved.current = l;
-      updateWord(word._id, l)
+      if (
+        previous.status === current.status &&
+        previous.progress === current.progress &&
+        previous.level === current.level
+      ) {
+        return;
+      }
+
+      const snapshot = { ...current };
+
+      // Prevent the next effect from treating the same values as pending.
+      saved.current = snapshot;
+
+      updateWord(word._id, snapshot)
         .then(() => {
-          onUpdate(word._id, l);
-          if (l.status === "done") onDone(word._id);
+          onUpdate(word._id, snapshot);
+
+          if (snapshot.status === "done") {
+            onDone(word._id);
+          }
         })
-        .catch(() => {});
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
+        .catch(() => {
+          // The next explicit save can retry.
+        });
+    };
+  }, [word._id, onDone, onUpdate]);
 
   const checkAnswer = (e) => {
     e.preventDefault();
+
     setResult(isCorrect(answer, word) ? "correct" : "wrong");
   };
 
@@ -234,54 +341,60 @@ function WordCard({ word, onDone, onUpdate }) {
 
   return (
     <div className="mx-auto max-w-md space-y-3 px-4 pb-4">
-      {/* Word hero card */}
+      {/* Word hero */}
       <div
-        className={`relative overflow-hidden rounded-2xl bg-gradient-to-br px-2 py-3 text-center text-white shadow-lg ${
+        className={`relative overflow-hidden rounded-2xl border px-3 py-4 text-center text-white ${
           isGerman
-            ? "from-rose-500 to-orange-500 shadow-rose-200"
-            : "from-indigo-600 to-violet-600 shadow-indigo-200"
+            ? "border-rose-500 bg-gradient-to-br from-rose-500 to-orange-500"
+            : "border-indigo-600 bg-gradient-to-br from-indigo-600 to-violet-600"
         }`}
       >
         <WordImage image={word.image} alt={word.word} />
 
-        {/* Word + speaker */}
-        <div className=" flex items-center justify-center gap-3">
-          <div className="flex items-center">
-            <span className="rounded-full absolute left-2 top-2   bg-white/20 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide">
-              {level}
-            </span>
-            <h2 className="break-words text-4xl font-extrabold leading-tight">
-              {word.word}
-            </h2>
-          </div>
+        <span className="absolute left-2 top-2 rounded-full border border-white/30 bg-white/15 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide">
+          {level}
+        </span>
+
+        <div className="mt-5 flex items-center justify-center gap-3">
+          <h2 className="break-words text-4xl font-extrabold leading-tight">
+            {word.word}
+          </h2>
+
           <button
             type="button"
             onClick={() => speak(word.word, lang)}
             aria-label="Listen to the word"
-            className="shrink-0 rounded-full bg-white/20 p-2.5 active:scale-90"
+            className="shrink-0 rounded-full border border-white/30 bg-white/15 p-2.5 active:scale-95"
           >
             <Volume2 size={20} />
           </button>
         </div>
 
-        <div className="mt-2 flex gap-2">
+        <div className="mt-4 grid grid-cols-2 gap-2">
           {[
-            { label: "English", text: word.pronunciationEnglish },
-            { label: "Hindi", text: word.pronunciationHindi },
-          ].map((p) => (
+            {
+              label: "English pronunciation",
+              text: word.pronunciationEnglish,
+            },
+            {
+              label: "Hindi pronunciation",
+              text: word.pronunciationHindi,
+            },
+          ].map((item) => (
             <div
-              key={p.label}
-              className="flex items-center justify-between gap-2 w-50 rounded-2xl bg-white/15 px-4 py-2.5"
+              key={item.label}
+              className="flex min-w-0 items-center justify-between gap-2 rounded-2xl border border-white/20 bg-white/10 px-3 py-2.5"
             >
-              <p className="break-words text-sm font-medium text-nowrap  ">
-                {p.text || <span className="opacity-50">Not added</span>}
+              <p className="min-w-0 break-words text-left text-sm font-medium">
+                {item.text || <span className="text-white/60">Not added</span>}
               </p>
+
               <button
                 type="button"
-                disabled={!p.text}
+                disabled={!item.text}
                 onClick={() => speak(word.word, lang)}
-                aria-label={`Listen ${p.label} pronunciation`}
-                className="shrink-0 rounded-full bg-white/20 p-2 active:scale-90 disabled:opacity-30"
+                aria-label={`Listen to ${item.label}`}
+                className="shrink-0 rounded-full border border-white/30 bg-white/15 p-2 disabled:opacity-30"
               >
                 <Volume2 size={16} />
               </button>
@@ -290,37 +403,44 @@ function WordCard({ word, onDone, onUpdate }) {
         </div>
       </div>
 
-      {/* Meaning + eye icon */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      {/* Meaning */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
               Meaning
             </p>
+
             {revealed ? (
               <div className="space-y-1">
-                <p className="break-words text-lg font-semibold">
-                  {word.hindiMeaning}
+                <p className="break-words text-lg font-semibold text-slate-800">
+                  {word.hindiMeaning || "Meaning not added"}
                 </p>
+
                 <p className="break-words text-sm text-slate-500">
-                  {word.englishMeaning}
+                  {word.englishMeaning || "English meaning not added"}
                 </p>
               </div>
             ) : (
-              <div className="space-y-2">
-                <div className="h-5 w-3/4 rounded bg-slate-100" />
-                <div className="h-4 w-1/2 rounded bg-slate-100" />
+              <div className="space-y-2" aria-label="Meaning hidden">
+                <div className="h-5 w-3/4 rounded-lg bg-slate-100" />
+                <div className="h-4 w-1/2 rounded-lg bg-slate-100" />
+
+                <p className="pt-1 text-xs text-slate-400">
+                  Try to remember the meaning before revealing it.
+                </p>
               </div>
             )}
           </div>
+
           <button
             type="button"
-            onClick={() => setRevealed((v) => !v)}
+            onClick={() => setRevealed((value) => !value)}
             aria-label={revealed ? "Hide meaning" : "Show meaning"}
-            className={`rounded-xl p-2.5 ${
+            className={`rounded-xl border p-2.5 ${
               revealed
-                ? "bg-indigo-600 text-white"
-                : "bg-slate-100 text-slate-600"
+                ? "border-indigo-600 bg-indigo-600 text-white"
+                : "border-slate-200 bg-slate-100 text-slate-600"
             }`}
           >
             {revealed ? <EyeOff size={20} /> : <Eye size={20} />}
@@ -328,33 +448,36 @@ function WordCard({ word, onDone, onUpdate }) {
         </div>
       </div>
 
-      {/* Status, progress (auto save) */}
-      <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      {/* Status and progress */}
+      <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
         <div className="grid grid-cols-3 gap-2">
-          {STATUSES.map((s) => (
+          {STATUSES.map((item) => (
             <button
-              key={s.value}
+              key={item.value}
               type="button"
-              onClick={() => changeStatus(s.value)}
-              className={`rounded-xl py-2 text-xs font-semibold ${
-                status === s.value
-                  ? s.value === "done"
-                    ? "bg-emerald-600 text-white"
-                    : "bg-indigo-600 text-white"
-                  : "bg-slate-100 text-slate-600"
+              onClick={() => changeStatus(item.value)}
+              className={`rounded-xl border px-1 py-2 text-xs font-semibold ${
+                status === item.value
+                  ? item.value === "done"
+                    ? "border-emerald-600 bg-emerald-600 text-white"
+                    : "border-indigo-600 bg-indigo-600 text-white"
+                  : "border-slate-200 bg-slate-50 text-slate-600"
               }`}
             >
-              {s.label}
+              {item.label}
             </button>
           ))}
         </div>
 
         <div>
-          <div className="mb-1 flex justify-between text-xs font-medium text-slate-500">
-            <span>Progress</span>
-            <span>{progress}%</span>
+          <div className="mb-2 flex justify-between text-xs font-medium text-slate-500">
+            <label htmlFor={`progress-${word._id}`}>Learning progress</label>
+
+            <span className="font-semibold text-indigo-600">{progress}%</span>
           </div>
+
           <input
+            id={`progress-${word._id}`}
             type="range"
             min="0"
             max="100"
@@ -362,25 +485,32 @@ function WordCard({ word, onDone, onUpdate }) {
             onChange={(e) => changeProgress(e.target.value)}
             className="w-full touch-none accent-indigo-600"
           />
+
+          <div className="mt-1 flex justify-between text-[10px] text-slate-400">
+            <span>Not started</span>
+            <span>In progress</span>
+            <span>Completed</span>
+          </div>
         </div>
 
-        <p className="h-4 text-xs text-slate-400">
-          {saveState === "saving" && "Saving..."}
-          {saveState === "saved" && "Saved ✓"}
+        <p role="status" className="min-h-4 text-xs text-slate-400">
+          {saveState === "saving" && "Saving changes..."}
+          {saveState === "saved" && "Changes saved"}
           {saveState && saveState !== "saving" && saveState !== "saved" && (
             <span className="text-red-600">{saveState}</span>
           )}
         </p>
       </div>
 
-      {/* Type the meaning */}
+      {/* Answer */}
       <form
         onSubmit={checkAnswer}
-        className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+        className="rounded-2xl border border-slate-200 bg-white p-4"
       >
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-          Your answer
+          Test your memory
         </p>
+
         <div className="flex gap-2">
           <input
             value={answer}
@@ -397,9 +527,10 @@ function WordCard({ word, onDone, onUpdate }) {
                   : "border-slate-200 focus:border-indigo-500"
             }`}
           />
+
           <button
             type="submit"
-            className="rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white active:scale-95"
+            className="rounded-xl border border-indigo-600 bg-indigo-600 px-4 text-sm font-semibold text-white active:scale-95"
           >
             Check
           </button>
@@ -407,12 +538,15 @@ function WordCard({ word, onDone, onUpdate }) {
 
         {result === "correct" && (
           <p className="mt-2 flex items-center gap-1 text-sm font-medium text-emerald-600">
-            <Check size={16} /> Correct!
+            <Check size={16} />
+            Correct!
           </p>
         )}
+
         {result === "wrong" && (
           <p className="mt-2 flex items-center gap-1 text-sm font-medium text-red-600">
-            <X size={16} /> Wrong, try again.
+            <X size={16} />
+            Wrong, try again.
           </p>
         )}
       </form>
@@ -420,130 +554,181 @@ function WordCard({ word, onDone, onUpdate }) {
   );
 }
 
+// ---------- Practice page ----------
+
 export default function Practice() {
   const [language, setLanguage] = useState(() => {
     try {
       const saved = localStorage.getItem(LANG_KEY);
-      return LANGUAGES.some((l) => l.value === saved) ? saved : ""; // "" = all
+
+      return LANGUAGES.some((item) => item.value === saved) ? saved : "";
     } catch {
       return "";
     }
   });
+
+  const [hideMeaningMode, setHideMeaningMode] = useState(() => {
+    try {
+      return localStorage.getItem(HIDE_MEANING_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [, rerender] = useReducer((n) => n + 1, 0);
 
-  // Practice state lives in refs so next / previous are instant
-  const poolRef = useRef(new Map()); // id -> word (only words that are not done)
-  const bagRef = useRef([]); // shuffled ids still to show in the current round
-  const seqRef = useRef([]); // ids shown so far (for the Previous button)
-  const cursorRef = useRef(0); // position inside seqRef
-  const genRef = useRef(0); // cancels stale loads when the language changes
+  const [, forceRender] = useState(0);
+
+  const refresh = useCallback(() => {
+    forceRender((value) => value + 1);
+  }, []);
+
+  const poolRef = useRef(new Map());
+  const bagRef = useRef([]);
+  const seqRef = useRef([]);
+  const cursorRef = useRef(0);
+  const genRef = useRef(0);
   const touchRef = useRef(null);
 
-  // Picks the next random word. When the round is over, the bag is reshuffled, so it never ends.
+  // Select the next weighted word, avoiding the current word when possible.
   const drawNext = useCallback((excludeId) => {
     const pool = poolRef.current;
+
     if (pool.size === 0) return null;
 
-    const pick = () => {
-      if (bagRef.current.length === 0)
-        bagRef.current = shuffle([...pool.keys()]);
-      return bagRef.current.pop();
-    };
+    // Remove tickets belonging to words no longer in the pool.
+    bagRef.current = bagRef.current.filter((id) => pool.has(id));
 
-    let id = pick();
-    let guard = 0;
-
-    while (
-      (!pool.has(id) || (id === excludeId && pool.size > 1)) &&
-      guard < pool.size * 3 + 5
-    ) {
-      id = pick();
-      guard += 1;
+    if (bagRef.current.length === 0) {
+      bagRef.current = createWeightedBag(pool);
     }
 
-    return pool.has(id) ? id : null;
+    if (bagRef.current.length === 0) return null;
+
+    let index = bagRef.current.length - 1;
+
+    // Prefer a different word when the pool contains multiple words.
+    if (pool.size > 1 && excludeId != null) {
+      const candidates = [];
+
+      for (let i = 0; i < bagRef.current.length; i++) {
+        if (bagRef.current[i] !== excludeId) {
+          candidates.push(i);
+        }
+      }
+
+      if (candidates.length > 0) {
+        index = candidates[Math.floor(Math.random() * candidates.length)];
+      }
+    }
+
+    const [id] = bagRef.current.splice(index, 1);
+
+    return pool.has(id) ? id : drawNext(excludeId);
   }, []);
 
   const next = useCallback(() => {
-    const seq = seqRef.current;
+    const sequence = seqRef.current;
 
-    if (cursorRef.current < seq.length - 1) {
-      cursorRef.current += 1; // moving forward through words already visited
+    // Revisit the next word in history if we previously went backward.
+    if (cursorRef.current < sequence.length - 1) {
+      cursorRef.current += 1;
     } else {
-      const id = drawNext(seq[cursorRef.current] ?? null);
+      const currentId = sequence[cursorRef.current] ?? null;
+
+      const id = drawNext(currentId);
+
       if (!id) return;
 
-      seq.push(id);
-      cursorRef.current = seq.length - 1;
+      sequence.push(id);
+      cursorRef.current = sequence.length - 1;
 
-      if (seq.length > MAX_HISTORY) {
-        seq.shift();
+      if (sequence.length > MAX_HISTORY) {
+        sequence.shift();
         cursorRef.current -= 1;
       }
     }
 
     window.speechSynthesis?.cancel();
-    rerender();
-  }, [drawNext]);
+    refresh();
+  }, [drawNext, refresh]);
 
   const previous = useCallback(() => {
     if (cursorRef.current === 0) return;
 
     cursorRef.current -= 1;
-    window.speechSynthesis?.cancel();
-    rerender();
-  }, []);
 
-  // A word marked done is removed from the rotation
+    window.speechSynthesis?.cancel();
+    refresh();
+  }, [refresh]);
+
+  // Remove completed words and their tickets.
   const removeWord = useCallback(
     (id) => {
-      const seq = seqRef.current;
-      if (!poolRef.current.has(id) && !seq.includes(id)) return;
+      const pool = poolRef.current;
+      const sequence = seqRef.current;
 
-      poolRef.current.delete(id);
+      if (!pool.has(id) && !sequence.includes(id)) return;
 
-      const keptBefore = seq
-        .slice(0, cursorRef.current)
-        .filter((x) => x !== id).length;
-      const nextSeq = seq.filter((x) => x !== id);
+      pool.delete(id);
 
-      seqRef.current = nextSeq;
+      bagRef.current = bagRef.current.filter((ticket) => ticket !== id);
+
+      const oldCursor = cursorRef.current;
+
+      const keptBefore = sequence
+        .slice(0, oldCursor)
+        .filter((item) => item !== id).length;
+
+      const nextSequence = sequence.filter((item) => item !== id);
+
+      seqRef.current = nextSequence;
       cursorRef.current = keptBefore;
 
-      if (cursorRef.current >= nextSeq.length) {
-        const newId = drawNext(nextSeq[nextSeq.length - 1] ?? null);
+      if (cursorRef.current >= nextSequence.length) {
+        const lastId = nextSequence[nextSequence.length - 1] ?? null;
 
-        if (newId) {
-          nextSeq.push(newId);
-          cursorRef.current = nextSeq.length - 1;
+        const nextId = drawNext(lastId);
+
+        if (nextId) {
+          nextSequence.push(nextId);
+          cursorRef.current = nextSequence.length - 1;
         } else {
-          cursorRef.current = 0;
+          cursorRef.current = Math.max(0, nextSequence.length - 1);
         }
       }
 
-      rerender();
+      refresh();
     },
-    [drawNext],
+    [drawNext, refresh],
   );
 
   const updateLocal = useCallback((id, patch) => {
     const word = poolRef.current.get(id);
-    if (word) poolRef.current.set(id, { ...word, ...patch });
+
+    if (!word) return;
+
+    const updated = { ...word, ...patch };
+
+    poolRef.current.set(id, updated);
+
+    // Rebuild the remaining tickets so changed progress affects
+    // future practice selections.
+    bagRef.current = createWeightedBag(poolRef.current);
   }, []);
 
-  // Loads every word that is not done, then shuffles them
-  const loadPool = async () => {
-    const gen = ++genRef.current;
+  const loadPool = useCallback(async () => {
+    const generation = ++genRef.current;
 
     poolRef.current = new Map();
     bagRef.current = [];
     seqRef.current = [];
     cursorRef.current = 0;
+
     setLoading(true);
     setError("");
-    rerender();
+    refresh();
 
     try {
       const map = new Map();
@@ -552,78 +737,133 @@ export default function Practice() {
         let page = 1;
 
         while (map.size < MAX_WORDS) {
-          const data = await getWords({ status, language, page, limit: 100 });
-          if (gen !== genRef.current) return;
+          const data = await getWords({
+            status,
+            language,
+            page,
+            limit: 100,
+          });
 
-          data.vocabularies.forEach((w) => map.set(w._id, w));
+          if (generation !== genRef.current) return;
 
-          if (page >= data.pagination.totalPages) break;
+          const vocabularies = data.vocabularies || [];
+
+          vocabularies.forEach((word) => {
+            if (map.size < MAX_WORDS) {
+              map.set(word._id, word);
+            }
+          });
+
+          const totalPages = Number(data.pagination?.totalPages ?? 1);
+
+          if (page >= totalPages || vocabularies.length === 0) {
+            break;
+          }
+
           page += 1;
         }
+
+        if (map.size >= MAX_WORDS) break;
       }
+
+      if (generation !== genRef.current) return;
 
       poolRef.current = map;
-      bagRef.current = shuffle([...map.keys()]);
+
+      bagRef.current = createWeightedBag(map);
 
       const first = drawNext(null);
-      if (first) seqRef.current.push(first);
+
+      if (first) {
+        seqRef.current.push(first);
+      }
     } catch (err) {
-      if (gen === genRef.current) setError(err.message);
+      if (generation === genRef.current) {
+        setError(err.message || "Unable to load vocabulary.");
+      }
     } finally {
-      if (gen === genRef.current) {
+      if (generation === genRef.current) {
         setLoading(false);
-        rerender();
+        refresh();
       }
     }
-  };
+  }, [language, drawNext, refresh]);
 
-  // Load on first open and whenever the language changes
   useEffect(() => {
     window.speechSynthesis?.cancel();
+
     loadPool();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [language]);
 
-  // Keyboard arrows (desktop)
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.target.closest?.("input, textarea, select")) return;
-      if (e.key === "ArrowRight") next();
-      if (e.key === "ArrowLeft") previous();
+    return () => {
+      // Ignore responses from an earlier request.
+      genRef.current += 1;
+      window.speechSynthesis?.cancel();
     };
+  }, [loadPool]);
 
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [next, previous]);
+  // Persist the meaning mode.
+  const changeHideMeaningMode = (value) => {
+    setHideMeaningMode(value);
+
+    try {
+      localStorage.setItem(HIDE_MEANING_KEY, String(value));
+    } catch {
+      // The practice page continues working without storage.
+    }
+  };
 
   const changeLanguage = (value) => {
     if (value === language) return;
 
     setLanguage(value);
+
     try {
       localStorage.setItem(LANG_KEY, value);
     } catch {
-      // the app keeps working even if storage is blocked
+      // The practice page continues working without storage.
     }
   };
 
-  // Swipe left = next, swipe right = previous
-  const onTouchStart = (e) => {
-    if (e.target.closest("input, textarea, select, button")) {
+  // Keyboard navigation.
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.target.closest?.("input, textarea, select, button")) {
+        return;
+      }
+
+      if (event.key === "ArrowRight") next();
+      if (event.key === "ArrowLeft") previous();
+    };
+
+    window.addEventListener("keydown", onKey);
+
+    return () => {
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [next, previous]);
+
+  // Swipe left = next; swipe right = previous.
+  const onTouchStart = (event) => {
+    if (event.target.closest?.("input, textarea, select, button")) {
       touchRef.current = null;
       return;
     }
 
-    touchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    touchRef.current = {
+      x: event.touches[0].clientX,
+      y: event.touches[0].clientY,
+    };
   };
 
-  const onTouchEnd = (e) => {
+  const onTouchEnd = (event) => {
     const start = touchRef.current;
+
     touchRef.current = null;
+
     if (!start) return;
 
-    const dx = e.changedTouches[0].clientX - start.x;
-    const dy = e.changedTouches[0].clientY - start.y;
+    const dx = event.changedTouches[0].clientX - start.x;
+    const dy = event.changedTouches[0].clientY - start.y;
 
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
       if (dx < 0) next();
@@ -632,83 +872,87 @@ export default function Practice() {
   };
 
   const word = poolRef.current.get(seqRef.current[cursorRef.current]);
+
   const poolSize = poolRef.current.size;
+
   const showSkeleton = loading && poolSize === 0;
   const empty = !loading && poolSize === 0;
 
   return (
     <div className="fixed inset-x-0 top-0 bottom-16 flex flex-col bg-slate-50">
-      {/* Header: language toggle + info */}
-      <div className="shrink-0 px-4 pb-2 pt-3">
-        <div className="mx-auto max-w-md space-y-2">
+      {/* Header */}
+      <div className="shrink-0 border-b border-slate-200 bg-white px-4 pb-1 pt-1">
+        <div className="mx-auto max-w-md space-y-3">
+          {/* Language selection */}
           <div
             role="tablist"
             aria-label="Practice language"
-            className="grid grid-cols-3 rounded-2xl bg-slate-200/70 p-1"
+            className="grid grid-cols-3 rounded-2xl border border-slate-200 bg-slate-100 p-1"
           >
-            {LANGUAGES.map((chip) => {
-              const active = language === chip.value;
+            {LANGUAGES.map((item) => {
+              const active = language === item.value;
 
               return (
                 <button
-                  key={chip.value}
+                  key={item.value}
+                  type="button"
                   role="tab"
                   aria-selected={active}
-                  onClick={() => changeLanguage(chip.value)}
-                  className={`rounded-xl py-2 text-sm font-semibold transition-all ${
+                  onClick={() => changeLanguage(item.value)}
+                  className={`rounded-xl py-2 text-sm font-semibold transition-colors ${
                     active
-                      ? chip.value === "german"
-                        ? "bg-rose-500 text-white shadow"
-                        : chip.value === "english"
-                          ? "bg-indigo-600 text-white shadow"
-                          : "bg-white text-slate-800 shadow"
+                      ? item.value === "german"
+                        ? "bg-rose-500 text-white"
+                        : item.value === "english"
+                          ? "bg-indigo-600 text-white"
+                          : "border border-slate-200 bg-white text-slate-800"
                       : "text-slate-500"
                   }`}
                 >
-                  {chip.label}
+                  {item.label}
                 </button>
               );
             })}
           </div>
-
-          <div className="flex items-center justify-between text-xs text-slate-500">
-            <p className="flex items-center gap-1.5 font-medium">
-              <Shuffle size={13} />
-              Random order · endless
-            </p>
-
-            {showSkeleton ? (
-              <Bone className="h-4 w-32" />
-            ) : (
-              <p>
-                <b className="text-slate-700">{poolSize}</b> words ·{" "}
-                <b className="text-slate-700">{bagRef.current.length}</b> left
-                in this round
-              </p>
-            )}
-          </div>
         </div>
       </div>
 
-      {error && <p className="px-4 py-2 text-sm text-red-600">{error}</p>}
+      {error && (
+        <div className="mx-4 mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+          {error}
+          <button
+            type="button"
+            onClick={loadPool}
+            className="ml-2 font-semibold underline"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
-      {/* Word area (swipe left / right) */}
+      {/* Word area */}
       <div
         onTouchStart={onTouchStart}
         onTouchEnd={onTouchEnd}
-        className="flex-1 overflow-y-auto pt-1"
+        className="flex-1 overflow-y-auto pt-3"
       >
         {showSkeleton && !error && <WordCardSkeleton />}
 
         {empty && !error && (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-            <p className="text-lg font-semibold">All done! 🎉</p>
-            <p className="text-sm text-slate-500">
-              There are no words left to practice.
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-3xl">
+              🎉
+            </div>
+
+            <p className="text-lg font-semibold text-slate-800">All done!</p>
+
+            <p className="max-w-xs text-sm text-slate-500">
+              There are no unfinished words left to practice.
             </p>
+
             <Link
               to="/add"
-              className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white"
+              className="rounded-xl border border-indigo-600 bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white"
             >
               Add new word
             </Link>
@@ -719,6 +963,7 @@ export default function Practice() {
           <WordCard
             key={word._id}
             word={word}
+            hideMeaningMode={hideMeaningMode}
             onDone={removeWord}
             onUpdate={updateLocal}
           />
@@ -726,21 +971,42 @@ export default function Practice() {
       </div>
 
       {/* Previous / Next */}
-      <div className=" border-t border-slate-200  px-4 py-1 ">
+      <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-1">
         <div className="mx-auto flex max-w-md gap-3">
           <button
+            type="button"
             onClick={previous}
             disabled={cursorRef.current === 0 || !word}
-            className="flex w-50 items-center justify-center gap-1 rounded-lg  rounded-br-3xl bg-slate-100 py-1.5 text-sm font-semibold text-slate-700 disabled:opacity-40"
+            className="flex flex-1 items-center justify-center gap-1 rounded-br-full border border-slate-200 bg-slate-100 py-2.5 text-sm font-semibold text-slate-700 disabled:opacity-40"
           >
-            <ChevronLeft size={18} /> Previous
+            <ChevronLeft size={18} />
+            Previous
           </button>
+          <div className="flex flex-col items-center">
+            <Toggle
+              checked={hideMeaningMode}
+              onChange={changeHideMeaningMode}
+              label="Hide meanings by default"
+            />
+            <div className=" text-xs text-slate-500">
+              {showSkeleton ? (
+                <Bone className="h-4 w-24" />
+              ) : (
+                <p>
+                  <b className="text-slate-700">{poolSize}</b>{" "}
+                </p>
+              )}
+            </div>
+          </div>
+
           <button
+            type="button"
             onClick={next}
             disabled={!word}
-            className="flex w-50 items-center justify-center gap-1 rounded-lg rounded-bl-3xl bg-indigo-600 py-1.5 text-sm font-semibold text-white active:scale-[0.99] disabled:opacity-40"
+            className="flex flex-1 items-center justify-center gap-1 rounded-bl-full rounded-sm border border-indigo-600 bg-indigo-600 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
           >
-            Next <ChevronRight size={18} />
+            Next
+            <ChevronRight size={18} />
           </button>
         </div>
       </div>
